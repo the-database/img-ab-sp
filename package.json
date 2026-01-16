@@ -1,11 +1,11 @@
 {
-  "name": "img-ab",
-  "version": "0.0.16",
+  "name": "img-ab-sp",
+  "version": "0.0.1",
   "main": "main.js",
   "author": {
     "name": "the-database"
   },
-  "description": "Bare-bones desktop image A/B comparison tool.",
+  "description": "",
   "private": true,
   "scripts": {
     "dev": "vite",

@@ -17,6 +17,9 @@
     modeSlider: true,
   });
 
+  // Flag to track if initial view mode has been set - only do it once
+  let initialViewModeSet = false;
+
   const image = ref(null);
   const imageCompare = ref(null);
   const imagePanZoom = ref(null);
@@ -94,13 +97,17 @@
     if (img.naturalHeight > maximumImageHeight.value) {
       maximumImageHeight.value = img.naturalHeight;
 
-      setTimeout(() => {
-        handleModeFitToHeight();
-      }, 0);
+      // Only set view mode on first image load, never again
+      if (!initialViewModeSet) {
+        initialViewModeSet = true;
+        setTimeout(() => {
+          handleModeFitToHeight();
+        }, 0);
 
-      setTimeout(() => {
-        handleMode100Zoom();
-      }, 0);
+        setTimeout(() => {
+          handleMode100Zoom();
+        }, 0);
+      }
     }
   }
 
@@ -182,6 +189,7 @@
 
   onMounted(() => {
 
+    
     window.addEventListener('contextmenu', (e) => {
       e.preventDefault()
       window.ipcRenderer?.handleContextMenu(cloneDeep(state));
@@ -198,9 +206,10 @@
 
       let pathArr = [];
       for (const f of event.dataTransfer.files) {
-        const filePath = window.ipcRenderer?.getPathForFile(f);
-        console.log('File Path of dragged files: ', filePath);
-        pathArr.push(filePath);
+          // Using webUtils.getPathForFile for Electron 40+
+          const filePath = window.ipcRenderer?.getPathForFile(f);
+          console.log('File Path of dragged files: ', filePath)
+          pathArr.push(filePath);
       }
       console.log(pathArr);
       const ret = window.ipcRenderer?.handleDragAndDrop(pathArr);
@@ -265,11 +274,11 @@
         case "s":
           window.ipcRenderer?.handleStartScreenCapture();
           break;
-        case "D":
-          handleCopyCurrentImage();
-          break;
         case "d":
           handleCopyAllImages();
+          break;
+        case "D":
+          handleCopyCurrentImage();
           break;
         case "f":
           window.ipcRenderer?.toggleFullScreen();
@@ -293,7 +302,14 @@
 
   window.ipcRenderer?.handleArgsReplace((event, value) => {
     console.log('handleArgsReplace', value);
-    state.allImages = value.filter(f => (/\.(gif|jpe?g|tiff?|png|webp|bmp)$/i).test(f));
+    const filteredImages = value.filter(f => (/\.(gif|jpe?g|tiff?|png|webp|bmp)$/i).test(f));
+    
+    // Reset view mode flag when clearing images so next load sets view mode
+    if (filteredImages.length === 0) {
+      initialViewModeSet = false;
+    }
+    
+    state.allImages = filteredImages;
     initImageIndex();
   });
 
@@ -450,12 +466,12 @@
             <td>Take Screen Capture of All Images</td>
           </tr>
           <tr>
-            <td>Shift+d</td>
-            <td>Copy Current Image</td>
-          </tr>
-          <tr>
             <td>d</td>
             <td>Copy All Images</td>
+          </tr>
+          <tr>
+            <td>Shift+D</td>
+            <td>Copy Current Image</td>
           </tr>
           <tr>
             <td>f</td>
@@ -480,7 +496,7 @@
         </div>
       </div>
       <div class="welcome-message" v-else>
-        <h1 class="welcome-title">img-ab</h1>
+        <h1 class="welcome-title">img-ab-sp</h1>
         <p>drag and drop one or more images or folders to get started</p>
 
         <table class="welcome-help" >
@@ -551,11 +567,11 @@
             </tr>
             <tr>
               <td>d</td>
-              <td>Copy Current Image</td>
+              <td>Copy All Images</td>
             </tr>
             <tr>
               <td>Shift+D</td>
-              <td>Copy All Images</td>
+              <td>Copy Current Image</td>
             </tr>
             <tr>
               <td>c</td>

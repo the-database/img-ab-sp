@@ -3,7 +3,7 @@ const path = require("path");
 const fs = require("fs");
 const process = require('process');
 
-const screenshotsPath = path.join(require('os').homedir(), "Pictures/img-ab/captures");
+const screenshotsPath = path.join(require('os').homedir(), "Pictures/img-ab");
 const copiesPath = path.join(require('os').homedir(), "Pictures/img-ab/copies");
 
 // run this as early in the main process as possible
@@ -22,8 +22,10 @@ let win = null;
 
 let folderMode = false;
 let fileMode = false;
+let slowPicsMode = false;
 let folderList = [];
 let fileListPerFolder = {};
+let comparisonGroups = [];
 let currentIndex = 0;
 let lastIndex = 0;
 let newCaptureDir = null;
@@ -52,9 +54,9 @@ function createWindow() {
       preload: path.join(__dirname, "preload.js"),
     },
     frame: true,
-    fullscreen: true,
+    fullscreen: true
   });
-  
+
   ipcMain.on('drag-and-drop', (event, pathArr) => {
     sendArgs(pathArr);
   });
@@ -73,6 +75,12 @@ function createWindow() {
 }
 
 function getCurrentFilesForFolderMode() {
+  // If we're in slow.pics mode, return the current comparison group
+  if (comparisonGroups.length > 0) {
+    return comparisonGroups[currentIndex] || [];
+  }
+  
+  // Original behavior: get nth file from each folder
   const result = [];
 
   folderList.forEach(p => {
@@ -86,16 +94,18 @@ function getCurrentFilesForFolderMode() {
 }
 
 function handleChangePage(input) {
+  const canNavigate = folderMode || comparisonGroups.length > 0;
+  
   switch (input.key) {
     case "Home":
-      if (folderMode) {
+      if (canNavigate) {
         currentIndex = 0;
         win.webContents.send('send-args-replace', getCurrentFilesForFolderMode());
       }
       break;
     case "PageUp":
     case "ArrowUp":
-      if (folderMode) {
+      if (canNavigate) {
         if (currentIndex > 0) {
           currentIndex--;
         }
@@ -104,7 +114,7 @@ function handleChangePage(input) {
       break;
     case "PageDown":
     case "ArrowDown":
-      if (folderMode) {
+      if (canNavigate) {
         if (currentIndex < lastIndex) {
           currentIndex++;
         }
@@ -112,12 +122,17 @@ function handleChangePage(input) {
       }
       break;
     case "End":
-      if (folderMode) {
+      if (canNavigate) {
         currentIndex = lastIndex;
         win.webContents.send('send-args-replace', getCurrentFilesForFolderMode());
       }
       break;
     case "c":
+      comparisonGroups = [];
+      folderList = [];
+      fileListPerFolder = {};
+      currentIndex = 0;
+      lastIndex = 0;
       win.webContents.send('send-args-replace', []);
       break;
     case "Escape":
@@ -146,27 +161,196 @@ function sendArgs(pathArr) {
   
   // populate folders and files per folder
   if (folderMode) {
-    folderList = [...folderList, ...pathArr];
-
+    // Reset state for new folder drop
+    folderList = [];
     fileListPerFolder = {};
+    comparisonGroups = [];
+    currentIndex = 0;
+    lastIndex = 0;
 
-    folderList.forEach(p => {
+    const allFiles = [];
+    pathArr.forEach(p => {
       const dir = fs.opendirSync(p);
-      fileListPerFolder[p] = [];
       let dirent;
       while ((dirent = dir.readSync()) !== null) {
-        if (/\.(jpeg|jpg|png|webp|gif)$/.test(dirent.name)) {
-          console.log(path.resolve(p, dirent.name));
-          fileListPerFolder[p].push(path.resolve(p, dirent.name));
+        if (/\.(jpeg|jpg|png|webp|gif)$/i.test(dirent.name)) {
+          allFiles.push({
+            name: dirent.name,
+            fullPath: path.resolve(p, dirent.name)
+          });
         }
       }
       dir.closeSync();
-      if (fileListPerFolder[p].length - 1 > lastIndex) {
-        lastIndex = fileListPerFolder[p].length - 1;
-      }
     });
 
-    win.webContents.send('send-args-replace', getCurrentFilesForFolderMode());
+    // Sort files first to help with grouping detection
+    allFiles.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+
+    // Try to auto-detect grouping pattern
+    // Strategy: Find common prefix patterns by looking at the filenames
+    // We'll try to find a delimiter that splits prefix from suffix
+    
+    let groupedByPrefix = {};
+    let detectedPattern = false;
+
+    // Pattern 1: slow.pics style with (B)/(P)/(I) markers
+    // e.g., "00_00.792 _ 19_(B) FFF.webp"
+    if (!detectedPattern && allFiles.some(f => /\([BPI]\)\s/.test(f.name))) {
+      allFiles.forEach(f => {
+        const match = f.name.match(/^(.+?)(\([BPI]\)\s)/);
+        if (match) {
+          const prefix = match[1].trim();
+          if (!groupedByPrefix[prefix]) {
+            groupedByPrefix[prefix] = [];
+          }
+          groupedByPrefix[prefix].push(f.fullPath);
+        }
+      });
+      detectedPattern = Object.keys(groupedByPrefix).length > 1;
+      if (detectedPattern) console.log('Detected pattern: slow.pics style (B)/(P)/(I)');
+    }
+
+    // Pattern 2: Frame number prefix with underscore
+    // e.g., "006283_[=^_^=] (8.3 Mb_s).webp" -> prefix is "006283"
+    if (!detectedPattern) {
+      // Try to detect numeric prefix followed by underscore or space
+      const prefixCounts = {};
+      
+      allFiles.forEach(f => {
+        // Try various delimiter patterns
+        const patterns = [
+          /^(\d+)_/,           // "006283_..." -> "006283"
+          /^(\d+)\s/,          // "006283 ..." -> "006283"
+          /^([\d_:.]+)\s*_\s*\d+_/,  // "00_00.792 _ 19_..." -> "00_00.792 _ 19"
+          /^([^_]+)_/,         // "anything_..." -> "anything" (generic underscore split)
+        ];
+        
+        for (const pattern of patterns) {
+          const match = f.name.match(pattern);
+          if (match) {
+            const prefix = match[1];
+            prefixCounts[prefix] = (prefixCounts[prefix] || 0) + 1;
+          }
+        }
+      });
+
+      // Find if there's a consistent grouping (multiple files per prefix)
+      const prefixValues = Object.values(prefixCounts);
+      const hasConsistentGroups = prefixValues.length > 1 && 
+        prefixValues.every(count => count > 1) &&
+        prefixValues.every(count => Math.abs(count - prefixValues[0]) <= 1); // Allow slight variation
+
+      if (hasConsistentGroups) {
+        // Re-extract using the pattern that worked
+        groupedByPrefix = {};
+        allFiles.forEach(f => {
+          const patterns = [
+            /^(\d+)_/,
+            /^(\d+)\s/,
+            /^([\d_:.]+\s*_\s*\d+)_/,
+          ];
+          
+          for (const pattern of patterns) {
+            const match = f.name.match(pattern);
+            if (match) {
+              const prefix = match[1];
+              if (prefixCounts[prefix] > 1) {
+                if (!groupedByPrefix[prefix]) {
+                  groupedByPrefix[prefix] = [];
+                }
+                groupedByPrefix[prefix].push(f.fullPath);
+                break;
+              }
+            }
+          }
+        });
+        detectedPattern = Object.keys(groupedByPrefix).length > 1;
+        if (detectedPattern) console.log('Detected pattern: numeric prefix with delimiter');
+      }
+    }
+
+    // Pattern 3: Generic - group by longest common prefix among consecutive sorted files
+    if (!detectedPattern && allFiles.length > 1) {
+      // Find the most common "suffix" patterns to identify what varies
+      // This handles cases where the source name is the suffix
+      groupedByPrefix = {};
+      
+      // Simple approach: split on last underscore or last space before parenthesis
+      allFiles.forEach(f => {
+        // Try to find prefix by looking for common delimiters
+        let prefix = null;
+        
+        // Try underscore followed by non-numeric (source name)
+        const underscoreMatch = f.name.match(/^(.+?)_[^0-9]/);
+        if (underscoreMatch) {
+          prefix = underscoreMatch[1];
+        }
+        
+        // Fallback: use first numeric sequence as prefix
+        if (!prefix) {
+          const numMatch = f.name.match(/^(\d+)/);
+          if (numMatch) {
+            prefix = numMatch[1];
+          }
+        }
+
+        if (prefix) {
+          if (!groupedByPrefix[prefix]) {
+            groupedByPrefix[prefix] = [];
+          }
+          groupedByPrefix[prefix].push(f.fullPath);
+        }
+      });
+
+      // Check if we got reasonable groups
+      const groups = Object.values(groupedByPrefix);
+      detectedPattern = groups.length > 1 && groups.every(g => g.length > 1);
+      if (detectedPattern) console.log('Detected pattern: generic prefix detection');
+    }
+
+    if (detectedPattern && Object.keys(groupedByPrefix).length > 1) {
+      // Sort prefixes naturally
+      const sortedPrefixes = Object.keys(groupedByPrefix).sort((a, b) => {
+        return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+      });
+
+      // Build comparison groups
+      comparisonGroups = sortedPrefixes.map(prefix => {
+        return groupedByPrefix[prefix].sort((a, b) => {
+          return path.basename(a).localeCompare(path.basename(b), undefined, { numeric: true, sensitivity: 'base' });
+        });
+      });
+
+      lastIndex = comparisonGroups.length - 1;
+      console.log(`Detected ${comparisonGroups.length} comparison groups with ${comparisonGroups[0]?.length || 0} images each`);
+      
+      win.webContents.send('send-args-replace', comparisonGroups[currentIndex] || []);
+    } else {
+      // Fall back to original behavior: treat as multiple source folders
+      folderList = [...pathArr];
+
+      folderList.forEach(p => {
+        const dir = fs.opendirSync(p);
+        fileListPerFolder[p] = [];
+        let dirent;
+        while ((dirent = dir.readSync()) !== null) {
+          if (/\.(jpeg|jpg|png|webp|gif)$/i.test(dirent.name)) {
+            console.log(path.resolve(p, dirent.name));
+            fileListPerFolder[p].push(path.resolve(p, dirent.name));
+          }
+        }
+        dir.closeSync();
+        // Sort files in each folder
+        fileListPerFolder[p].sort((a, b) => {
+          return path.basename(a).localeCompare(path.basename(b), undefined, { numeric: true, sensitivity: 'base' });
+        });
+        if (fileListPerFolder[p].length - 1 > lastIndex) {
+          lastIndex = fileListPerFolder[p].length - 1;
+        }
+      });
+
+      win.webContents.send('send-args-replace', getCurrentFilesForFolderMode());
+    }
 
   } else if (fileMode) {
     win.webContents.send('send-args-append', pathArr);
@@ -321,12 +505,12 @@ ipcMain.on('show-context-menu', (event, state) => {
       }
     },
     {
-      label: 'Copy Current Image (Shift+D)',
-      click: () => { event.sender.send('context-menu-command', 'copy-current-image') }
-    },
-    {
       label: 'Copy All Images (D)',
       click: () => { event.sender.send('context-menu-command', 'copy-all-images') }
+    },
+    {
+      label: 'Copy Current Image (Shift+D)',
+      click: () => { event.sender.send('context-menu-command', 'copy-current-image') }
     },
     { type: 'separator' },
   ];
