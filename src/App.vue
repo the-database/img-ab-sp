@@ -15,10 +15,26 @@
     modeFitToHeight: false,
     modeFitToWidth: false,
     modeSlider: true,
+    toastMessage: '',
+    toastVisible: false,
   });
 
   // Flag to track if initial view mode has been set - only do it once
   let initialViewModeSet = false;
+  let toastTimeout = null;
+
+  function showToast(message) {
+    state.toastMessage = message;
+    state.toastVisible = true;
+    
+    if (toastTimeout) {
+      clearTimeout(toastTimeout);
+    }
+    
+    toastTimeout = setTimeout(() => {
+      state.toastVisible = false;
+    }, 2000);
+  }
 
   const image = ref(null);
   const imageCompare = ref(null);
@@ -284,6 +300,11 @@
           window.ipcRenderer?.toggleFullScreen();
       }
     });
+
+    // Listen for copy result notifications
+    window.ipcRenderer?.onCopyResult((event, result) => {
+      showToast(result.message);
+    });
   });
 
   function initImageIndex() {
@@ -405,6 +426,11 @@
       <span class="info-right" v-show="state.showInfo && state.modeSlider">
         {{ state.selectedOverlayImageIndex+1 }}/{{ state.allImages.length }}: {{  state.allImages[state.selectedOverlayImageIndex] }}
       </span>
+
+      <div class="toast" :class="{ 'toast-visible': state.toastVisible }">
+        {{ state.toastMessage }}
+      </div>
+
       <table class="help" v-show="state.showHelp">
         <tbody>
           <tr>
@@ -600,6 +626,26 @@
 
 
 <style scoped>
+  .toast {
+    position: fixed;
+    bottom: 2rem;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 0.75rem 1.5rem;
+    border-radius: 0.5rem;
+    font-size: 1.25rem;
+    z-index: 100;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    pointer-events: none;
+  }
+
+  .toast-visible {
+    opacity: 1;
+  }
+
   .image-container .info {
     position: fixed;
     top: 0rem;

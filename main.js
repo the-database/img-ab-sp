@@ -608,20 +608,24 @@ ipcMain.on('copy-current-image', (event, state) => {
   
   if (!imagePath) {
     console.log('No image selected to copy');
+    event.sender.send('copy-result', { success: false, message: 'No image selected' });
     return;
   }
   
   // Check if it's a local file (not a URL)
   if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
     console.log('Cannot copy remote images');
+    event.sender.send('copy-result', { success: false, message: 'Cannot copy remote images' });
     return;
   }
   
   try {
     const destPath = copyImageToExportPath(imagePath);
     console.log(`Successfully copied current image to: ${destPath}`);
+    event.sender.send('copy-result', { success: true, message: `Copied 1 image`, destPath });
   } catch (err) {
     console.error('Error copying image:', err);
+    event.sender.send('copy-result', { success: false, message: `Error: ${err.message}` });
   }
 });
 
@@ -631,6 +635,7 @@ ipcMain.on('copy-all-images', (event, state) => {
   
   if (!allImages || allImages.length === 0) {
     console.log('No images to copy');
+    event.sender.send('copy-result', { success: false, message: 'No images to copy' });
     return;
   }
   
@@ -654,4 +659,8 @@ ipcMain.on('copy-all-images', (event, state) => {
   });
   
   console.log(`Successfully copied ${copiedCount} images (${skippedCount} skipped)`);
+  event.sender.send('copy-result', { 
+    success: copiedCount > 0, 
+    message: `Copied ${copiedCount} image${copiedCount !== 1 ? 's' : ''}${skippedCount > 0 ? ` (${skippedCount} skipped)` : ''}`
+  });
 });

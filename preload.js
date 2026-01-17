@@ -1,5 +1,4 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron')
-
 contextBridge.exposeInMainWorld('ipcRenderer', {
   handleArgsReplace: (callback) => ipcRenderer.on('send-args-replace', callback),
   handleArgsAppend: (callback) => ipcRenderer.on('send-args-append', callback),
@@ -12,5 +11,6 @@ contextBridge.exposeInMainWorld('ipcRenderer', {
   toggleFullScreen: () => ipcRenderer.send('toggle-full-screen'),
   copyCurrentImage: (state) => ipcRenderer.send('copy-current-image', state),
   copyAllImages: (state) => ipcRenderer.send('copy-all-images', state),
+  onCopyResult: (callback) => ipcRenderer.on('copy-result', callback),
   getPathForFile: (file) => webUtils.getPathForFile(file)
 })
