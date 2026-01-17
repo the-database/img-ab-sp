@@ -5,7 +5,7 @@
   "author": {
     "name": "the-database"
   },
-  "description": "",
+  "description": ".",
   "private": true,
   "scripts": {
     "dev": "vite",

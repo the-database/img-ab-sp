@@ -287,14 +287,20 @@
   });
 
   function initImageIndex() {
-
-    state.selectedImageIndex = 0;
+    // Preserve selectedImageIndex if it's still valid for the new image set
+    // Otherwise reset to 0
+    if (state.selectedImageIndex >= state.allImages.length) {
+      state.selectedImageIndex = 0;
+    }
 
     if (state.allImages.length < 2) {
       state.selectedOverlayImageIndex = 0;
     }
     else {
-      if (state.selectedOverlayImageIndex === 0) {
+      // Preserve selectedOverlayImageIndex if valid, otherwise set to 1
+      if (state.selectedOverlayImageIndex >= state.allImages.length) {
+        state.selectedOverlayImageIndex = 1;
+      } else if (state.selectedOverlayImageIndex === 0 && state.selectedImageIndex === 0) {
         state.selectedOverlayImageIndex = 1;
       }
     }
